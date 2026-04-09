@@ -165,8 +165,71 @@ def tg_stats_message() -> str:
     return "\n".join(lines)
 
 
+def tg_period_message(label: str, date_from: str, date_to: str) -> str:
+    """Статистика за період (date_from, date_to — ISO рядки UTC)."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    lines = [f"<b>{label}</b>"]
+
+    for sid in STATIONS:
+        c.execute("SELECT name FROM snapshots WHERE station_id=? LIMIT 1", (sid,))
+        row = c.fetchone()
+        name = row[0] if row else f"#{sid}"
+        lines.append(f"\n<b>{name}</b>")
+
+        c.execute("""
+            SELECT DISTINCT port_index, port_title, power_kw
+            FROM port_snapshots ps JOIN snapshots s ON s.id=ps.snapshot_id
+            WHERE s.station_id=? ORDER BY port_index
+        """, (sid,))
+        ports = c.fetchall()
+
+        for port_idx, port_title, power_kw in ports:
+            lines.append(f"  Порт {port_idx+1} — {port_title or '?'} {int(power_kw or 0)} кВт")
+
+            c.execute("""
+                SELECT COUNT(*), AVG(duration_sec), MIN(duration_sec),
+                       MAX(duration_sec), SUM(duration_sec)
+                FROM sessions
+                WHERE station_id=? AND port_index=?
+                  AND ended_at IS NOT NULL
+                  AND started_at >= ? AND started_at < ?
+            """, (sid, port_idx, date_from, date_to))
+            cnt, avg_s, min_s, max_s, sum_s = c.fetchone()
+
+            if cnt:
+                lines.append(f"    Сесій: {cnt}")
+                lines.append(f"    Сер: {fmt_duration(avg_s)}  Мін: {fmt_duration(min_s)}  Макс: {fmt_duration(max_s)}")
+                lines.append(f"    Загалом: {fmt_duration(sum_s)}")
+            else:
+                lines.append("    Сесій не було")
+
+    conn.close()
+    return "\n".join(lines)
+
+
+def tg_today_message() -> str:
+    now = datetime.now(timezone.utc)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    day_end   = now.replace(hour=23, minute=59, second=59).isoformat()
+    label = f"Статистика за сьогодні ({now.strftime('%d.%m.%Y')})"
+    return tg_period_message(label, day_start, day_end)
+
+
+def tg_month_message() -> str:
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+    # перший день наступного місяця
+    if now.month == 12:
+        month_end = now.replace(year=now.year+1, month=1, day=1, hour=0, minute=0, second=0).isoformat()
+    else:
+        month_end = now.replace(month=now.month+1, day=1, hour=0, minute=0, second=0).isoformat()
+    label = f"Статистика за {now.strftime('%B %Y')}"
+    return tg_period_message(label, month_start, month_end)
+
+
 def tg_poll_commands():
-    """Фоновий потік: слухає команди /status і /stats."""
+    """Фоновий потік: слухає команди бота."""
     # Пропустити всі старі повідомлення — відповідати тільки на нові
     try:
         r = requests.get(f"{TG_API}/getUpdates", params={"offset": -1}, timeout=10)
@@ -190,8 +253,20 @@ def tg_poll_commands():
                 print(f"  [TG] Команда: {text!r}")
                 if text.startswith("/status"):
                     tg_send(tg_status_message())
+                elif text.startswith("/today"):
+                    tg_send(tg_today_message())
+                elif text.startswith("/month"):
+                    tg_send(tg_month_message())
                 elif text.startswith("/stats"):
                     tg_send(tg_stats_message())
+                elif text.startswith("/help") or text.startswith("/start"):
+                    tg_send(
+                        "<b>Команди бота:</b>\n"
+                        "/status — поточний стан станцій\n"
+                        "/today  — статистика за сьогодні\n"
+                        "/month  — статистика за місяць\n"
+                        "/stats  — статистика за весь час"
+                    )
         except Exception as e:
             print(f"  [TG poll] {e}")
             time.sleep(5)
@@ -468,7 +543,13 @@ def main():
     t = threading.Thread(target=tg_poll_commands, daemon=True)
     t.start()
 
-    tg_send("✅ Моніторинг запущено\n/status — стан станцій\n/stats — статистика")
+    tg_send(
+        "✅ Моніторинг запущено\n"
+        "/status — стан станцій\n"
+        "/today  — статистика за сьогодні\n"
+        "/month  — статистика за місяць\n"
+        "/stats  — статистика за весь час"
+    )
 
     try:
         while True:
