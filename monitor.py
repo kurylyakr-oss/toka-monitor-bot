@@ -75,20 +75,18 @@ def tg_send(text: str):
 
 
 def tg_status_message() -> str:
+    lines = ["<b>Поточний статус станцій</b>"]
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    lines = ["<b>Поточний статус станцій</b>"]
 
     for sid in STATIONS:
-        c.execute("SELECT name, raw_json FROM snapshots WHERE station_id=? ORDER BY id DESC LIMIT 1", (sid,))
-        row = c.fetchone()
-        if not row:
-            lines.append(f"\n#{sid}: немає даних")
+        # Завжди беремо живі дані з API
+        data = fetch_station(sid)
+        if not data:
+            lines.append(f"\n#{sid}: не вдалось отримати дані")
             continue
 
-        name, raw = row
-        data = json.loads(raw)
-        lines.append(f"\n<b>{name}</b>")
+        lines.append(f"\n<b>{data.get('name', sid)}</b>")
 
         for i, p in enumerate(data.get("ports", [])):
             label, icon = status_label(p.get("status"))
