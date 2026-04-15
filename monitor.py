@@ -376,10 +376,23 @@ def update_sessions(station_id: int, data: dict, conn: sqlite3.Connection):
 
 # ── API ──────────────────────────────────────────────────────────────────────
 
+HEADERS = {
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "uk-UA,uk;q=0.9,en;q=0.8",
+    "Referer": "https://toka.energy/mapa",
+    "Origin": "https://toka.energy",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+}
+
+
 def fetch_station(station_id: int) -> dict | None:
     url = f"{API_BASE}/{station_id}"
     try:
-        r = requests.get(url, timeout=15, headers={"Accept": "application/json"})
+        r = requests.get(url, timeout=15, headers=HEADERS)
         r.raise_for_status()
         return r.json()
     except requests.RequestException as e:
